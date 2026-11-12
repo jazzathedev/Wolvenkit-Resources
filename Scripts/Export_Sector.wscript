@@ -64,13 +64,13 @@ let sectors = [
 
 const fileTemplate = '{"Header":{"WKitJsonVersion":"0.0.7","DataType":"CR2W"},"Data":{"Version":195,"BuildVersion":0,"RootChunk":{},"EmbeddedFiles":[]}}';
 
-let jsonExtensions = [".app", ".ent", ".mi", ".mt", ".streamingsector",".cfoliage"];
+let jsonExtensions = [".app", ".ent", ".mi", ".mt", ".rig", ".streamingsector",".cfoliage"];
 let exportExtensions = [".mesh",".w2mesh",".physicalscene",".xbm"]; // need xbms for decals
 let exportEmbeddedExtensions = [".mesh",".w2mesh", ".xbm", ".mlmask", ".mlsetup",".cfoliage", ".streamingsector"];
 
 if (!withmats){
 	Logger.Info('Withmats false')
-    jsonExtensions = [".app", ".ent", ".streamingsector",".cfoliage"];
+    jsonExtensions = [".app", ".ent", ".rig", ".streamingsector",".cfoliage"];
     exportExtensions = [".mesh",".w2mesh",".physicalscene"];
     exportEmbeddedExtensions = [".mesh",".w2mesh",".cfoliage", ".streamingsector"];
 }
