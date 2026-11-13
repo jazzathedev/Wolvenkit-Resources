@@ -25,6 +25,17 @@ const mesh_colliders=false
 // format for images to get exported to
 const imgFormat = 'png'
 
+// Export in batches of this many files. ExportFiles runs everything on background threads at once, and firing
+// the whole sector in one go crashes WolvenKit in the texture exporter (DirectXTex SaveToWICFile). Lower it if it still crashes.
+const exportBatchSize = 100;
+
+// Wait for each batch to land in raw before starting the next one (needed on WolvenKit versions where ExportFiles
+// returns immediately). A batch gives up after this many seconds without a new file appearing.
+const waitForExports = true;
+const exportStallSeconds = 90;
+const exportPollMs = 2000;
+const exportLogSeconds = 15;
+
 /**
  * Any sectors in the list below will be added to your project before exporting. List of sector files to add to your project, see wiki: https://tinyurl.com/cyberpunk2077worldsectors
  *
@@ -143,12 +154,73 @@ for (const fileName of projectSet) {
 let exportsettings = {Mesh: { ExportType: "MeshOnly", WithMaterials: withmats, ImageType: imgFormat, LodFilter: true, Binary: true}}
 
 
-// export all of our files with the default export settings
-Logger.Info(`Exporting ${exportSet.size} files...`);
-wkit.ExportFiles([...exportSet], exportsettings);
+// export all of our files in batches, one after the other
+Logger.Info(`Exporting ${exportSet.size} files in batches of ${exportBatchSize}...`);
+const missingExports = exportInBatches([...exportSet], exportsettings);
+if (missingExports.length > 0) {
+    Logger.Warning(`${missingExports.length} file(s) did not export (e.g. ${missingExports.slice(0, 10).join(', ')})`);
+}
 Logger.Success("======================================\nSector export finished!\n\n")
 
 //#region helper_functions
+// Returns the list of expected raw files that never appeared
+function exportInBatches(files, settings) {
+    const missing = [];
+    let finishedBefore = 0;
+    const batches = Math.ceil(files.length / exportBatchSize);
+    const total = files.filter(producesRawFile).length;
+    for (let i = 0; i < files.length; i += exportBatchSize) {
+        const batch = files.slice(i, i + exportBatchSize);
+        const batchNumber = Math.floor(i / exportBatchSize) + 1;
+        Logger.Info(`Export batch ${batchNumber} of ${batches} (${batch.length} files)...`);
+        // Newer WolvenKit builds wait and return true/false; older ones return nothing and keep exporting in the background
+        const result = wkit.ExportFiles(batch, settings);
+        // only files that become a raw file of their own can be waited for
+        const expected = batch.filter(producesRawFile).map(export_filename);
+        if (waitForExports && typeof result !== 'boolean') {
+            waitForBatch(expected, finishedBefore, total, batchNumber, batches);
+        }
+        const batchMissing = expected.filter((path) => !wkit.FileExistsInRaw(path));
+        finishedBefore += expected.length - batchMissing.length;
+        missing.push(...batchMissing);
+    }
+    return missing;
+}
+
+function producesRawFile(fileName) {
+    return /\.(mesh|w2mesh|physicalscene|xbm)$/.test(fileName);
+}
+
+// Blocks until every expected file exists in raw, or nothing new has appeared for exportStallSeconds
+function waitForBatch(expected, finishedBefore, total, batchNumber, batches) {
+    if (expected.length === 0) {
+        return;
+    }
+    let lastDone = -1;
+    let lastChange = Date.now();
+    let lastLog = 0;
+    while (true) {
+        const done = expected.filter((path) => wkit.FileExistsInRaw(path)).length;
+        if (done !== lastDone) {
+            lastDone = done;
+            lastChange = Date.now();
+        }
+        if (done >= expected.length) {
+            Logger.Info(`Exported ${finishedBefore + done} of ${total} files (batch ${batchNumber} of ${batches} finished).`);
+            return;
+        }
+        if (Date.now() - lastLog > exportLogSeconds * 1000) {
+            lastLog = Date.now();
+            Logger.Info(`Exported ${finishedBefore + done} of ${total} files (batch ${batchNumber} of ${batches}, ${done}/${expected.length} in this batch)...`);
+        }
+        if (Date.now() - lastChange > exportStallSeconds * 1000) {
+            Logger.Warning(`No new files for ${exportStallSeconds} s, moving on to the next batch.`);
+            return;
+        }
+        wkit.Sleep(exportPollMs);
+    }
+}
+
 function* GetPaths(jsonData) {
     for (let [key, value] of Object.entries(jsonData || {})) {
         if (value instanceof TypeHelper.ResourcePath && !value.isEmpty()) {
